@@ -33,4 +33,54 @@
 
 ---
 
+## 三層壓縮機制詳解
+
+### Layer 1：微壓縮 (Micro Compact) 的設計原則
+
+`KEEP_RECENT` 參數（預設為 3）決定保留最近幾次工具結果的完整內容。超過此數量的舊結果會被替換為形如 `[Previous: used bash]` 的佔位符。
+
+這樣設計的關鍵在於：**模型需要記得「做過什麼」，但不需要記得「完整輸出是什麼」**。只要知道「三輪前呼叫了 bash」，模型就能正常推進，而不必在每次 LLM 呼叫時重讀數千 token 的命令輸出。
+
+### Layer 2：自動壓縮 (Auto Compact) 的觸發與恢復
+
+自動壓縮的觸發條件是 Token 估算值超過 `THRESHOLD`（如 50,000）。其核心流程分為三步：
+
+1. **封存完整歷史**：將目前所有的 `messages` 寫入 `.transcripts/transcript_{timestamp}.jsonl`。即使後續上下文被清空，完整記錄仍保存在磁碟上，可供人工審查或事後分析。
+2. **呼叫模型做摘要**：傳送獨立的摘要請求給 LLM，要求其從完整歷史中提煉出「繼續工作所需的關鍵資訊」。
+3. **重設 messages**：將對話歷史縮減為兩條訊息：摘要（role: user）+ 模型確認繼續（role: assistant）。
+
+### Layer 3：手動壓縮 (Compact Tool) 的適用場景
+
+手動壓縮由模型主動呼叫，適用於以下情況：
+- **任務切換**：之前大量讀取的程式碼內容與新任務無關。
+- **注意力重置**：模型判斷上下文「太雜」，主動要求清場後重新聚焦。
+
+### 三層壓縮的觸發時機比較
+
+| 壓縮層 | 觸發時機 | 保留粒度 | 資料丟失風險 |
+| :--- | :--- | :--- | :--- |
+| Micro Compact | 每一輪自動觸發 | 最近 N 次工具輸出的完整內容 | **極低** |
+| Auto Compact | Token 超過閾值時自動觸發 | 一段 LLM 摘要文字 | **低**（Transcript 封存） |
+| Manual Compact | 模型主動呼叫 `compact` | 同 Auto Compact | **低** |
+
+> **重要原則**：壓縮並非刪除，而是「移出活躍上下文」。完整歷史始終存活於 `.transcripts/` 中，資訊沒有真正丟失。
+
+### 循環整合三層的程式碼結構
+
+```python
+def agent_loop(messages: list):
+    while True:
+        micro_compact(messages)                      # 每輪靜默執行 Layer 1
+        if estimate_tokens(messages) > THRESHOLD:
+            messages[:] = auto_compact(messages)     # Token 超標觸發 Layer 2
+        response = client.messages.create(...)
+        # ... 工具執行 ...
+        if manual_compact_requested:
+            messages[:] = auto_compact(messages)     # 模型主動觸發 Layer 3
+```
+
+`messages[:]` 是 Python 的原地修改語法，確保呼叫者持有的列表引用也被更新。
+
+---
+
 ## 常見問題 Q&A

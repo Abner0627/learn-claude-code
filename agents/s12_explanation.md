@@ -34,4 +34,64 @@
 
 ---
 
+## Worktree 隔離機制詳解
+
+### 控制平面 vs 執行平面
+
+s12 將任務管理分為兩個平面：
+
+| 平面 | 目錄 | 職責 |
+| :--- | :--- | :--- |
+| **控制平面** | `.tasks/` | 記錄「做什麼」：任務的 ID、狀態、依賴、擁有者 |
+| **執行平面** | `.worktrees/` | 記錄「在哪做」：每個任務對應的獨立 Git Worktree 目錄 |
+
+兩個平面透過 `worktree` 欄位雙向綁定：
+- `task_1.json` 中有 `"worktree": "auth-refactor"`。
+- `.worktrees/index.json` 中有 `"task_id": 1`。
+
+`bind_worktree()` 方法在建立 Worktree 時同時更新兩側的狀態，確保兩個平面始終保持一致。
+
+### Git Worktree 的核心原理
+
+`git worktree add -b wt/auth-refactor .worktrees/auth-refactor HEAD` 在**同一個 Git 儲存庫**中建立一個額外的工作目錄，並將其指向一個獨立分支。這讓多個任務可以：
+- 修改相同的檔案（各自在自己的分支上，互不污染）。
+- 隨時可以對各自的改動進行 `git diff` 或 `git commit`。
+
+相比「複製整個專案目錄」，Worktree 幾乎不佔用額外磁碟空間，因為它共享同一個 `.git` 目錄的物件儲存。
+
+### 事件流 (`events.jsonl`) 的完整類型
+
+每個生命週期步驟都會記錄一條事件，便於外部系統（如 CI、監控面板）訂閱和審計：
+
+| 事件類型 | 觸發時機 |
+| :--- | :--- |
+| `worktree.create.before` | `git worktree add` 執行前 |
+| `worktree.create.after` | Worktree 成功建立並完成綁定後 |
+| `worktree.create.failed` | 建立失敗（如分支名衝突） |
+| `worktree.remove.before` | `git worktree remove` 執行前 |
+| `worktree.remove.after` | 成功移除，任務同步標記完成 |
+| `worktree.remove.failed` | 移除失敗（如目錄有未提交的改動） |
+| `worktree.keep` | Worktree 被標記為保留（不移除） |
+| `task.completed` | 任務狀態更新為 `completed` |
+
+### `keep` vs `remove` 的選擇
+
+| 操作 | 行為 | 適用場景 |
+| :--- | :--- | :--- |
+| `worktree_keep(name)` | 在 `index.json` 標記為 `kept`，保留目錄 | 需要事後人工查閱或手動合併 |
+| `worktree_remove(name, complete_task=True)` | 刪除目錄 + 完成任務 + 觸發事件 | 自動化流程中的正常完成 |
+
+### 崩潰恢復機制
+
+若 Agent 程序意外崩潰，可以從磁碟重建現場：
+
+1. 掃描 `.tasks/` 目錄 → 恢復所有任務的狀態。
+2. 讀取 `.worktrees/index.json` → 恢復 Worktree 清單。
+3. 比對兩者的 `task_id` 綁定關係 → 識別哪些任務在哪個目錄執行中。
+4. 讀取 `.worktrees/events.jsonl` → 確認最後一個成功的事件，判斷哪些操作需要重做。
+
+**核心原則**：對話記憶（messages）是易失的；磁碟狀態是持久的。崩潰後重建依靠的是磁碟，而非模型的記憶。
+
+---
+
 ## 常見問題 Q&A

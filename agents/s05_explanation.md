@@ -39,4 +39,73 @@
 
 ---
 
+## SkillLoader 機制詳解
+
+### 技能目錄結構
+
+每個技能以一個目錄表示，目錄中包含 `SKILL.md` 檔案：
+
+```
+skills/
+  pdf/
+    SKILL.md         # 包含 YAML frontmatter + 正文
+  code-review/
+    SKILL.md
+  agent-builder/
+    SKILL.md
+```
+
+`SKILL.md` 的格式如下：
+
+```yaml
+---
+name: pdf
+description: Process PDF files -- extract tables, text, metadata
+---
+
+# PDF Processing Workflow
+
+Step 1: Read file metadata...
+Step 2: Extract content using the appropriate library...
+```
+
+`SkillLoader` 透過 `rglob("SKILL.md")` 遞歸掃描整個 `skills/` 目錄，並以目錄名作為技能識別符（除非 frontmatter 中有 `name` 欄位覆蓋）。
+
+### 兩層注入的 Token 成本分析
+
+| 注入層 | 內容 | Token 消耗（約估） |
+| :--- | :--- | :--- |
+| Layer 1（系統提示） | 所有技能的名稱與簡短描述 | ~5-10 token / 技能 |
+| Layer 2（tool_result） | 單一技能的完整 SOP | ~500-3000 token / 技能 |
+
+以 10 個技能、每個完整內容 2000 token 為例：
+- **全塞進 System Prompt**：每次對話固定多消耗 20,000 token，即使只用到 1 個技能。
+- **兩層按需加載**：System Prompt 只多 ~100 token，用到哪個技能才付那個技能的費用。
+
+這種「懶加載（Lazy Loading）」策略在技能數量增多時效益尤為明顯。
+
+### 與 s04 子代理的設計哲學比較
+
+| 維度 | s04 子代理 (Subagent) | s05 技能加載 (Skill Loading) |
+| :--- | :--- | :--- |
+| **解決問題** | 對話歷史過長 | 系統提示過胖 |
+| **隔離單位** | 對話歷史 | 知識內容 |
+| **觸發方式** | 父代理主動委派 | 模型識別需求後自主呼叫 |
+| **生命週期** | 一次性：做完即丟棄 | 持久存在於 `tool_result` 中直到對話結束 |
+
+### 關鍵設計原則：循環不變
+
+如同 s02，新增 `load_skill` 工具**不需要修改 agent loop**。工具只是加入 dispatch map：
+
+```python
+TOOL_HANDLERS = {
+    # ...base tools...
+    "load_skill": lambda **kw: SKILL_LOADER.get_content(kw["name"]),
+}
+```
+
+技能加載的結果以 `tool_result` 回傳，對循環來說與任何其他工具呼叫結果無異。
+
+---
+
 ## 常見問題 Q&A

@@ -34,4 +34,59 @@
 
 ---
 
+## 任務圖 (DAG) 詳解
+
+### 三個核心查詢
+
+`TaskManager` 設計的目的是隨時回答三個問題：
+
+1. **什麼現在可以做？** → 找出 `status == "pending"` 且 `blockedBy == []` 的任務
+2. **什麼被卡住了？** → 找出 `blockedBy` 不為空的任務，並顯示其前置依賴
+3. **什麼做完了？** → 找出 `status == "completed"` 的任務
+
+### `blockedBy` 與 `blocks` 的對稱性
+
+任務間的依賴關係是**雙向記錄**的：
+
+- `blockedBy`：「我的前置任務是誰？」（正向依賴）
+- `blocks`：「我完成後誰可以開始？」（反向依賴）
+
+這種冗餘設計讓任務圖可以被快速查詢，無需每次都遍歷所有任務才能找到下游任務。
+
+### 自動依賴解鎖機制
+
+當一個任務被標記為 `completed` 時，`_clear_dependency` 方法會自動掃描所有任務，將該任務的 ID 從其他任務的 `blockedBy` 列表中移除：
+
+```python
+def _clear_dependency(self, completed_id):
+    for f in self.dir.glob("task_*.json"):
+        task = json.loads(f.read_text())
+        if completed_id in task.get("blockedBy", []):
+            task["blockedBy"].remove(completed_id)
+            self._save(task)
+```
+
+這意味著：模型**不需要**手動解鎖下游任務。完成任務的瞬間，任務看板的「可執行任務」集合會自動更新。
+
+### s03 TodoManager vs s07 TaskManager
+
+| 維度 | s03 TodoManager（記憶體） | s07 TaskManager（磁碟） |
+| :--- | :--- | :--- |
+| **存活範圍** | 僅限單次對話 | 跨對話、跨壓縮、跨重啟 |
+| **關係表達** | 無（扁平清單） | `blockedBy` + `blocks` 邊 |
+| **並行性** | 無法識別 | 顯式表示可並行任務 |
+| **狀態精度** | 做完 / 沒做完 | `pending → in_progress → completed` |
+| **多代理支援** | 無 | `owner` 欄位標記誰認領了 |
+| **壓縮後存活** | 否（記憶體中） | 是（JSON 在磁碟上） |
+
+### 任務圖是後續章節的骨架
+
+從 s07 開始，任務圖成為所有協調機制的核心基礎：
+- **s08 後台任務**：後台執行的 Shell 指令可以在完成後更新任務狀態。
+- **s09-s10 Agent 團隊**：隊員認領任務時需要讀寫任務圖。
+- **s11 自主代理**：空閒隊員掃描任務圖找工作。
+- **s12 Worktree 隔離**：每個任務可以綁定一個獨立的 Git Worktree 目錄。
+
+---
+
 ## 常見問題 Q&A

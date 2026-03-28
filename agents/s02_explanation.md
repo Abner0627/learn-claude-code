@@ -47,6 +47,49 @@
 
 ---
 
+## 關鍵設計洞察
+
+### 加工具 = 加 Handler + 加 Schema，循環永遠不變
+
+s02 最重要的設計原則是：**擴充工具能力不需要修改 Agent Loop**。每次新增工具只需要兩個步驟：
+
+1. **新增 Schema**：在 `TOOLS` 列表中加入工具的 JSON Schema 定義，讓模型知道這個工具的名稱、描述與參數格式。
+2. **新增 Handler**：在 `TOOL_HANDLERS` 字典中加入對應的 Python 函式。
+
+```python
+# 加一個工具就這樣：
+TOOLS.append({"name": "search_file", "description": "...", "input_schema": {...}})
+TOOL_HANDLERS["search_file"] = lambda **kw: run_search(kw["pattern"], kw["path"])
+# 循環本身一行都不需要改。
+```
+
+### Dispatch Map 取代 if/elif 鏈
+
+s01 中只有一個工具（bash），工具執行是硬編碼的。s02 引入了字典查找（dispatch map）：
+
+```python
+handler = TOOL_HANDLERS.get(block.name)
+output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
+```
+
+相比 `if block.name == "bash": ... elif block.name == "read_file": ...` 的 if/elif 鏈，dispatch map 的優勢在於：新增工具不需要修改任何現有的條件判斷邏輯。
+
+### `safe_path()` 的沙盒機制
+
+專用工具的核心安全優勢在於 `safe_path()` 函式：
+
+```python
+def safe_path(p: str) -> Path:
+    path = (WORKDIR / p).resolve()   # 將相對路徑轉為絕對路徑
+    if not path.is_relative_to(WORKDIR):
+        raise ValueError(f"Path escapes workspace: {p}")
+    return path
+```
+
+`.resolve()` 會展開所有的 `../`、符號連結（symlinks）和相對路徑，確保路徑比較不被繞過。若模型嘗試存取 `../etc/passwd` 這類路徑，`is_relative_to(WORKDIR)` 會回傳 `False` 並直接拋出例外。
+
+---
+
 ## 常見問題 Q&A
 
 ### 1. 此處每個工具有一個處理函數，這麼做為什麼能使路徑沙箱防止逃逸工作區？

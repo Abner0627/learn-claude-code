@@ -55,6 +55,40 @@
 
 ---
 
+## 關鍵設計洞察
+
+### 不到 30 行，這就是整個 Agent
+
+s01 的 `agent_loop` 函數不到 30 行，卻已具備完整的 Agent 能力。後面 11 個章節（s02-s12）都在這個循環上**疊加機制**，但循環本身的核心結構始終不變：
+
+```
+while True:
+    LLM 呼叫 → 追加回應 → 檢查 stop_reason → 執行工具 → 追加結果 → 回到頂部
+```
+
+### 累積式訊息列表
+
+`messages` 陣列是 Agent 的「工作記憶」。每一輪循環都會向其中追加：
+1. 模型的回應（`role: "assistant"`）
+2. 工具執行的結果（`role: "user"`）
+
+這意味著隨著任務進行，`messages` 會持續增長。這是 Agent 能夠「記住之前做了什麼」的關鍵，也是後續章節（s06 上下文壓縮）需要解決的問題來源。
+
+### 同一輪可能有多個工具呼叫
+
+模型在一次 LLM 呼叫中可以回傳**多個** `tool_use` 區塊。s01 的循環正確地處理了這一點：
+
+```python
+for block in response.content:        # 遍歷所有區塊
+    if block.type == "tool_use":      # 只處理工具呼叫
+        output = run_bash(block.input["command"])
+        results.append(...)
+```
+
+所有工具呼叫的結果會被收集到 `results` 列表中，再作為一條 `role: "user"` 訊息整體回傳，保持訊息格式的正確性。
+
+---
+
 ## 常見問題 Q&A
 
 ### 1. 程式碼中的 `\033[33m` 是什麼意思？

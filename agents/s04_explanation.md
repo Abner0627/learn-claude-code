@@ -38,6 +38,46 @@
 
 ---
 
+## 關鍵設計洞察
+
+### 子代理的工具集限制（禁止遞迴）
+
+子代理擁有除 `task` 以外的所有基礎工具。這是一個重要的安全設計：若子代理也能呼叫 `task`，就可能產生遞迴生成（子代理又生成子代理），導致無法控制的 API 費用和深度。
+
+```python
+PARENT_TOOLS = CHILD_TOOLS + [task_tool]   # 只有父代理有 task 工具
+CHILD_TOOLS  = [bash, read_file, write_file, edit_file]
+```
+
+### 30 步安全上限
+
+子代理的循環有硬性上限：
+
+```python
+for _ in range(30):  # 最多執行 30 輪工具呼叫
+    ...
+```
+
+這防止了子代理在異常情況下無限循環消耗 API。若任務在 30 步內未完成，循環會強制退出，並回傳當時最後一輪的文字輸出（可能是部分結果）。
+
+### 只有最終文字被回傳
+
+子代理執行過程中可能進行了 30 多次工具呼叫，但主代理收到的只是最後一條 `text` 區塊：
+
+```python
+return "".join(
+    b.text for b in response.content if hasattr(b, "text")
+) or "(no summary)"
+```
+
+整個 `sub_messages` 列表在 `run_subagent()` 函式結束後會被 Python 的垃圾回收機制自動釋放。主代理的 `messages` 中不留下任何子代理的執行細節。
+
+### 子代理與任務委派（s04）vs 持久隊員（s09）的邊界
+
+子代理是**無狀態的**：每次呼叫 `task` 工具都會建立一個全新的 `sub_messages = []`，沒有跨呼叫的記憶。這讓它非常適合「一次性查詢」，但不適合需要多輪協商的複雜任務（那是 s09 持久隊員的場景）。
+
+---
+
 ## 常見問題 Q&A
 
 ### 1. 在 Claude Code 與 Gemini CLI 中，實際上是如何使用 sub agent 的？
