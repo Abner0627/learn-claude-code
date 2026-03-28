@@ -46,7 +46,7 @@
 
 ```python
 PARENT_TOOLS = CHILD_TOOLS + [task_tool]   # 只有父代理有 task 工具
-CHILD_TOOLS  = [bash, read_file, write_file, edit_file]
+CHILD_TOOLS  = [bash, read_file, write_file, edit_file, todo]
 ```
 
 ### 30 步安全上限
