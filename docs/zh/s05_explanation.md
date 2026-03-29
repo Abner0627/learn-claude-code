@@ -1,5 +1,17 @@
 # s05_skill_loading.py 執行流程詳解
 
+## 問題與解決方案摘要
+
+### 問題
+
+你希望 Agent 能遵循特定領域的工作流程：Git 規範、測試模式、程式碼審查清單。若全部塞入系統提示，代價極高——10 個技能、每個 2000 token，就是 20,000 token，而其中大部分與當前任務毫無關係。
+
+### 解決方案
+
+採用兩層注入策略：第一層在系統提示中只放技能名稱（低成本，約 100 tokens/skill）；第二層在 `tool_result` 中按需放入完整內容（約 2000 tokens）。`SkillLoader` 遞迴掃描 `SKILL.md` 檔案，以目錄名稱作為技能識別碼。透過兩層按需加載實現「懶加載（Lazy Loading）」策略，讓 Agent **只在真正需要時才消耗完整技能的 token 預算**。
+
+---
+
 本章介紹了「隨選知識（On-demand Knowledge）」的注入機制，透過兩層式注入 (Two-layer Injection) 來優化系統提示詞 (System Prompt) 的大小。
 
 ### 初始化階段 (System Prompt 構建)

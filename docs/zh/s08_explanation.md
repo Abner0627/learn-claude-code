@@ -1,5 +1,17 @@
 # s08_background_tasks.py 執行流程詳解
 
+## 問題與解決方案摘要
+
+### 問題
+
+有些指令需要執行數分鐘：`npm install`、`pytest`、`docker build`。在阻塞式迴圈下，模型只能等待。使用者說「安裝依賴，順便建立一個設定檔」，Agent 卻只能一個接一個地處理。
+
+### 解決方案
+
+`BackgroundManager` 以**執行緒安全的通知佇列追蹤任務**。`run()` 啟動守護執行緒後立即返回，子進程完成後結果進入通知佇列。每次 LLM 呼叫前排空通知佇列，將完成訊息注入上下文。迴圈本身保持單執行緒，只有子進程的 I/O 被並行化，**後台任務與主對話迴圈非同步進行**。
+
+---
+
 本章介紹了「非阻塞執行（Non-blocking Execution）」，讓 Agent 能夠在等待長耗時指令的同時繼續工作。當輸入 Prompt 為 `"Run a long test suite (5 mins) and then fix a bug in main.py."` 時，流程如下：
 
 ### 第一輪迴圈 (Iteration 1: 發起背景任務)

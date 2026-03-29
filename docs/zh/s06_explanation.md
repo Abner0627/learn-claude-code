@@ -1,5 +1,20 @@
 # s06_context_compact.py 執行流程詳解
 
+## 問題與解決方案摘要
+
+### 問題
+
+上下文窗口是有限的。讀取一個 1000 行的檔案就消耗約 4000 token；讀取 30 個檔案、執行 20 條指令，輕易就能突破 100k token。不壓縮，Agent 根本無法在大型專案中持續運作。
+
+### 解決方案
+
+三層壓縮，激進程度遞增：
+- **第一層（micro_compact）**：每次 LLM 呼叫前，將超過 3 輪的舊 `tool_result` 替換為 `[Previous: used {tool_name}]`
+- **第二層（auto_compact）**：token 超過 50,000 時，儲存完整對話至 `.transcripts/`，讓 LLM 生成摘要，並重置 `messages`
+- **第三層（compact tool）**：模型主動呼叫 `compact` 工具，實現手動壓縮
+
+---
+
 本章介紹了「對話壓縮（Context Compression）」技術，透過三層管線確保 Agent 具備長程任務的處理能力。
 
 ### 微壓縮階段 (Micro Compact - 每一輪)

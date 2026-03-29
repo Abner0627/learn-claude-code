@@ -1,5 +1,17 @@
 # s02_tool_use.py 執行流程詳解
 
+## 問題與解決方案摘要
+
+### 問題
+
+只有 `bash` 時，所有操作都走 Shell。`cat` 截斷行為不可預測，`sed` 遇到特殊字元就崩潰，每次 `bash` 呼叫都是不受約束的安全面。專用工具（`read_file`、`write_file`）可以在工具層面做路徑沙箱。核心洞察：新增工具**不需要修改迴圈**。
+
+### 解決方案
+
+透過 Tool Dispatch Map 將工具名稱**對映到處理函式**，使用 `TOOL_HANDLERS` 字典。每個工具對應一個 Handler，並透過 `safe_path()` 實現路徑沙箱以防止路徑逃逸。**新增工具 = 新增 Handler + 新增 Schema，迴圈永遠不變。**
+
+---
+
 本章展示了如何擴充 Agent 的能力，使其能夠透過多種工具（讀取、寫入、編輯、執行指令）與環境互動。當輸入 Prompt 為 `"Read README.md and then create a summary.txt"` 時，流程如下：
 
 ### 第一輪迴圈 (Iteration 1)
